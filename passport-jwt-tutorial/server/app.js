@@ -11,6 +11,7 @@ const localStrategy = require("passport-local").Strategy;
 const users = require("./users.json");
 const bcrypt = require("bcrypt");
 const JWTstrategy = require("passport-jwt").Strategy;
+const secureRoutes = require("./secureRoutes");
 
 // Setting view engine to ejs
 app.set("views", path.join(__dirname, "views"));
@@ -20,6 +21,8 @@ app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({extended:false}));
 
 app.use(passport.initialize());
+
+app.use("/user", secureRoutes);
 
 function getJwt() {
   console.log("in getJwt");
@@ -131,6 +134,10 @@ app.get("/", (req, res) => {
 
 app.get("/secureroute", 
 passport.authenticate("jwt", {session:false}), async (req, res) => {
+  /* 
+    if you visit this route without logging in, you should get "unauthorized" b/c of authenticate("jwt")
+    if you visit with an invalid jwt you will also get unauthorized
+  */
   console.log("req.isAuthenticated: ", req.isAuthenticated());
   console.log("req.user: ", req.user);
   console.log("req.login: ", req.login);
@@ -139,7 +146,14 @@ passport.authenticate("jwt", {session:false}), async (req, res) => {
 });
 
 app.get("/logout", async (req, res) => {
-  res.send("logged out");
+  await fs.writeFile(
+    "fakeLocal.json",
+    JSON.stringify({ Authorization: ""}),
+    (err) => {
+      if (err) throw err;
+    }
+  )
+  res.redirect("/login");
 });
 
 app.get("/login", async (req, res) => {
@@ -165,16 +179,40 @@ app.get("/success", (req, res) => {
 app.post("/login", async (req, res, next) => {
   // "custom callback" strategy 
   passport.authenticate("login", async (error, user, info) => {
+    console.log("error: ", error);
+    console.log("user: ", user);
+    console.log("info: ", info);
+
     if (error) {
       return next(error.message);
+      // return next(error); // OR error
     }
     if (!user) {
       res.redirect(`/failed?message=${info.message}`);
     }
+    // It doesn't seem like the req.login() does anything for us when using JWT.
+    // I could be wrong though. You'll have to play around with it yourself. 
+    // req.login(user, {session:false}, async (error) => {
+    // console.log("using req.login");
+
+    const body = {_id: user.id, email: user.email };
+    const token = jwt.sign({user:body}, "TOP_SECRET");
+    await fs.writeFile(
+      "fakeLocal.json",
+      JSON.stringify({Authorization: `Bearer ${token}`}),
+      (err) => {
+        if (err) throw err;
+      }
+    );
+    return res.redirect(`success?message=${info.message}`);
+
+    //})
     if (user) {
       res.redirect(`/success?message=${info.message}`);
     }
   })(req, res, next);
+}, (req, res, next) => {
+  res.send("Hello");
 });
 
 app.post("/signup", async (req, res, next) => {
